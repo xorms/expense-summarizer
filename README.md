@@ -8,6 +8,6 @@
         pip install pyinstaller
 
     输入：
-        pyinstaller --onefile --noconsole --add-data "C:/Windows/Fonts/simsun.ttc;." 程序名.py
+        pyinstaller --onefile --noconsole --add-data "C:/Windows/Fonts/simsun.ttc;." pythonExcel.py
 
 这样打包出来的 EXE 就可以分发给其他人直接使用了。
