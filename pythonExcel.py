@@ -1,338 +1,304 @@
-# 导入必要的库
-import pandas as pd  # 用于处理Excel和CSV数据
-import tkinter as tk  # 用于创建图形用户界面
-from tkinter import filedialog, messagebox  # 用于文件选择对话框和消息提示框
-import os  # 用于操作系统功能，如文件路径和打开文件
-from datetime import datetime  # 用于处理日期和时间
-from fpdf import FPDF  # 用于生成PDF文件
+import pandas as pd
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import os
+import sys
+from datetime import datetime
+from fpdf import FPDF
+
+# 获取程序运行目录
+if getattr(sys, 'frozen', False):
+    APP_PATH = os.path.dirname(sys.executable)
+else:
+    APP_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
-class MedicalReportApp:
+def cn_currency(value):
+    """金额转中文大写"""
+    units = ["", "拾", "佰", "仟", "万", "拾", "佰", "仟", "亿"]
+    digits = "零壹贰叁肆伍陆柒捌玖"
+    try:
+        s_val = f"{float(value):.2f}".replace(".", "")
+        if float(value) <= 0: return "零元整"
+        res = ""
+        for i, d in enumerate(s_val[::-1]):
+            if i == 0:  # 分
+                if d != '0':
+                    res = f"{digits[int(d)]}分" + res
+                else:
+                    res = "整"
+            elif i == 1:  # 角
+                if d != '0':
+                    res = f"{digits[int(d)]}角" + res
+                elif res != "整":
+                    res = "零" + res
+            elif i == 2:  # 元
+                res = "元" + res
+                res = digits[int(d)] + res
+        else:
+            if d != '0':
+                res = digits[int(d)] + units[i - 2] + res
+            elif not res.startswith("零"):
+                res = "零" + res
+        return res.replace("零元", "元").replace("零零", "零").strip("零")
+    except:
+        return "零元整"
+
+
+class MedicalApp:
     def __init__(self, root):
-        """
-        初始化医疗报销应用程序
-        :param root: tkinter主窗口对象
-        """
         self.root = root
-        self.root.title("医疗费用报销处理系统 - V3.0")  # 设置窗口标题
-        self.root.geometry("850x600")  # 设置窗口大小（宽x高）
+        self.root.title("医疗费报销系统 V2.0 (三级审核版)")
+        self.root.geometry("850x400")
 
-        # 1. 诊疗项目关键词定义：将Excel中的明细项目名称映射到标准分类
-        self.project_mapping = {
-            "医事服务费": ["医事服务费", "诊察费"],  # 关键词列表，用于识别分类
-            "检查费": ["检查费"],
-            "治疗费": ["治疗费"],
-            "药费": ["西药费", "中成药费", "中草药费"],
-            "手术费": ["手术费"],
-            "卫生材料费": ["材料费", "卫生材料费"]
-        }
-        # 显示的类别列表：映射中的6个分类 + "其他项目"（用于未识别项目）
-        self.display_cats = list(self.project_mapping.keys()) + ["其他项目"]
+        # 映射
+        self.outpatient_mapping = {"医事服务费": ["医事服务费", "诊察费"], "检查费": ["检查费", "化验费"],
+                                   "治疗费": ["治疗费"], "西药": ["西药费"], "中药": ["中药饮片", "中草药", "中成药"],
+                                   "卫生材料费": ["材料费", "卫生材料费"]}
+        self.inpatient_mapping = self.outpatient_mapping.copy()
+        self.inpatient_mapping["床位费"] = ["床位费", "空调费", "住院费", "住院"]
+        self.summary_cats = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "床位费", "其他费"]
 
-        # 创建tkinter变量用于存储金额数据
-        self.amt_vars = {cat: tk.StringVar(value="0.00") for cat in self.display_cats}  # 票面金额变量
-        self.self_vars = {cat: tk.StringVar(value="0.00") for cat in self.display_cats}  # 自付金额变量
-        self.refund_labels = {}  # 存储实报金额标签的字典
+        # 变量
+        self.info_vars = {k: tk.StringVar() for k in ["name", "id", "bank", "age", "unit", "type", "phone", "date"]}
+        self.info_vars["date"].set(datetime.now().strftime("%Y-%m-%d"))
+        self.in_days_var = tk.StringVar(value="0")
 
-        # --- 界面部分: 报销单基本信息录入区 ---
-        # 创建一个带标签的框架，用于个人信息输入
-        info_frame = tk.LabelFrame(root, text="报销单基本信息", padx=10, pady=10, font=("微软雅黑", 10, "bold"))
-        info_frame.pack(fill="x", padx=20, pady=10)  # 填充X方向，设置内边距
+        self.data_out = self.init_struct(self.outpatient_mapping)
+        self.data_in = self.init_struct(self.inpatient_mapping)
+        self.out_totals = {k: tk.StringVar(value="0.00") for k in ["amt", "self", "refund"]}
+        self.in_totals = {k: tk.StringVar(value="0.00") for k in ["amt", "self", "refund"]}
+        self.sum_amt_vars = {cat: tk.StringVar(value="0.00") for cat in self.summary_cats}
 
-        # 定义个人信息字段: (标签文本, 变量键名, 行, 列)
-        fields = [
-            ("姓名:", "name", 0, 0), ("报销日期:", "date", 0, 2), ("单位:", "unit", 0, 4),
-            ("身份证号:", "id", 1, 0), ("手机号:", "phone", 1, 2), ("银行卡号:", "bank", 1, 4)
-        ]
-        self.info_entries = {}  # 存储所有输入框的字典
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
+        self.setup_tab1()
+        self.setup_detail_tab("门诊收据", self.data_out, self.outpatient_mapping, self.out_totals)
+        self.setup_detail_tab("住院收据", self.data_in, self.inpatient_mapping, self.in_totals, True)
+        self.bind_traces()
 
-        # 创建标签和输入框
-        for label, key, r, c in fields:
-            tk.Label(info_frame, text=label).grid(row=r, column=c, sticky="e", pady=5)  # 创建标签，右对齐
-            ent = tk.Entry(info_frame, width=20)  # 创建输入框
-            ent.grid(row=r, column=c + 1, padx=5, sticky="w")  # 放置输入框，左对齐
-            self.info_entries[key] = ent  # 保存输入框引用到字典
+    def init_struct(self, m):
+        return {c: {"amt": tk.StringVar(value="0.00"), "self": tk.StringVar(value="0.00"),
+                    "refund": tk.StringVar(value="0.00")} for c in list(m.keys()) + ["其他费"]}
 
-        # 设置报销日期为当前日期
-        self.info_entries["date"].insert(0, datetime.now().strftime("%Y-%m-%d"))
+    def setup_tab1(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 1. 报销单汇总 ")
+        f_info = tk.LabelFrame(tab, text="基本信息", padx=5, pady=5)
+        f_info.pack(fill='x', padx=5)
 
-        # --- 功能按钮区域 ---
-        btn_frame = tk.Frame(root)  # 创建框架容器
-        btn_frame.pack(pady=10)  # 放置框架
-        # 创建"读取Excel"按钮
-        tk.Button(btn_frame, text=" 1. 读取Excel并自动计算 ", command=self.load_excel, bg="#2196F3", fg="white",
-                  font=("微软雅黑", 10, "bold")).pack(side="left", padx=10)
-        # 文件加载状态标签
-        self.lbl_file = tk.Label(root, text="请加载Excel文件", fg="gray")
-        self.lbl_file.pack()
+        tk.Label(f_info, text="姓名:").grid(row=0, column=0, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["name"], width=10).grid(row=0, column=1, padx=2)
+        tk.Label(f_info, text="身份证:").grid(row=0, column=2, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["id"], width=22).grid(row=0, column=3, padx=2)
+        tk.Label(f_info, text="银行卡:").grid(row=0, column=4, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["bank"], width=20).grid(row=0, column=5, padx=2)
+        tk.Label(f_info, text="日期:").grid(row=0, column=6, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["date"], width=11).grid(row=0, column=7, padx=2)
+        tk.Label(f_info, text="年龄:").grid(row=1, column=0, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["age"], width=10).grid(row=1, column=1, padx=2)
+        tk.Label(f_info, text="单位:").grid(row=1, column=2, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["unit"], width=22).grid(row=1, column=3, padx=2)
+        tk.Label(f_info, text="类型:").grid(row=1, column=4, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["type"], width=20).grid(row=1, column=5, padx=2)
+        tk.Label(f_info, text="手机:").grid(row=1, column=6, sticky='e')
+        tk.Entry(f_info, textvariable=self.info_vars["phone"], width=11).grid(row=1, column=7, padx=2)
 
-        # --- 明细表格区域 ---
-        table_frame = tk.Frame(root, padx=20)  # 创建表格框架
-        table_frame.pack(fill="both", expand=True)  # 填充并扩展
+        f_table = tk.LabelFrame(tab, text="项目合计", padx=5, pady=5)
+        f_table.pack(fill='both', expand=True, padx=5)
+        grid = [("医事服务费", 0, 0), ("西药", 0, 2), ("床位费", 0, 4), ("检查费", 1, 0), ("中药", 1, 2),
+                ("其他费", 1, 4), ("治疗费", 2, 0), ("卫生材料费", 2, 2)]
+        for cat, r, c in grid:
+            tk.Label(f_table, text=cat + ":").grid(row=r, column=c, sticky='e', pady=8)
+            tk.Entry(f_table, textvariable=self.sum_amt_vars[cat], state='readonly', width=12, justify='right').grid(
+                row=r, column=c + 1, padx=5)
 
-        # 创建表头
-        headers = ["诊疗项目", "票面金额合计", "自付金额(输入)", "实报金额"]
-        for c, text in enumerate(headers):
-            tk.Label(table_frame, text=text, relief="ridge", bg="#e0e0e0", width=22, font=("微软雅黑", 9, "bold")).grid(
-                row=0, column=c, sticky="nsew")  # 创建表头标签，带背景色和边框
+        f_footer = tk.Frame(tab, pady=10)
+        f_footer.pack(fill='x')
+        self.lbl_final = tk.Label(f_footer, text="票面总金额: 0.00   自费自负: 0.00   实报数合计: 0.00",
+                                  font=("微软雅黑", 10, "bold"), fg="blue")
+        self.lbl_final.pack()
+        tk.Button(f_footer, text=" 生成结算 CSV 并打印 PDF ", command=self.generate_output, bg="#4CAF50", fg="white",
+                  font=("微软雅黑", 10, "bold")).pack(pady=5)
 
-        # 创建表格内容行（每个分类一行）
-        for r, cat in enumerate(self.display_cats):
-            # 诊疗项目名称列（只读）
-            tk.Label(table_frame, text=cat, relief="groove", anchor="w", padx=10).grid(row=r + 1, column=0,
-                                                                                       sticky="nsew")
-            # 票面金额列（只读）
-            tk.Entry(table_frame, textvariable=self.amt_vars[cat], state="readonly", justify="right").grid(row=r + 1,
-                                                                                                           column=1,
-                                                                                                           sticky="nsew")
-            # 自付金额列（可编辑，淡黄色背景）
-            ent_self = tk.Entry(table_frame, textvariable=self.self_vars[cat], justify="right", bg="#fffde7")
-            ent_self.grid(row=r + 1, column=2, sticky="nsew")
-            ent_self.bind("<KeyRelease>", self.update_all_totals)  # 绑定键盘释放事件，实时更新合计
-            # 实报金额列（自动计算，蓝色文字）
-            lbl_ref = tk.Label(table_frame, text="0.00", relief="groove", anchor="e", padx=10, fg="blue")
-            lbl_ref.grid(row=r + 1, column=3, sticky="nsew")
-            self.refund_labels[cat] = lbl_ref  # 保存标签引用到字典
+    def setup_detail_tab(self, title, d, m, t, days=False):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=f" {title} ")
+        top = tk.Frame(tab, pady=5);
+        top.pack(fill='x')
+        tk.Button(top, text="上传Excel数据表", command=lambda: self.load_excel(d, m)).pack(side='left', padx=10)
+        if days:
+            tk.Label(top, text="住院天数:").pack(side='left')
+            tk.Entry(top, textvariable=self.in_days_var, width=5).pack(side='left')
 
-        # --- 合计行 ---
-        # 计算合计行的行索引（在最后一行）
-        self.row_idx_total = len(self.display_cats) + 1
+        f_g = tk.Frame(tab, padx=5);
+        f_g.pack(fill='both')
+        for c, text in enumerate(["诊疗项目", "票面金额", "自付金额", "实报金额"]):
+            tk.Label(f_g, text=text, width=22, relief="ridge", bg="#e0e0e0").grid(row=0, column=c)
+        for i, cat in enumerate(d.keys()):
+            tk.Label(f_g, text=cat, relief="groove", anchor='w', padx=5).grid(row=i + 1, column=0, sticky='nsew')
+            tk.Entry(f_g, textvariable=d[cat]["amt"], state='readonly', justify='right').grid(row=i + 1, column=1,
+                                                                                              sticky='nsew')
+            tk.Entry(f_g, textvariable=d[cat]["self"], justify='right', bg="#fffde7").grid(row=i + 1, column=2,
+                                                                                           sticky='nsew')
+            tk.Label(f_g, textvariable=d[cat]["refund"], relief="groove", anchor='e', padx=5, fg="green").grid(
+                row=i + 1, column=3, sticky='nsew')
+        row_t = len(d) + 1
+        tk.Label(f_g, text="该表合计", relief="ridge", bg="#f5f5f5", font=("", 9, "bold")).grid(row=row_t, column=0,
+                                                                                                sticky='nsew')
+        tk.Label(f_g, textvariable=t["amt"], relief="ridge", bg="#f5f5f5", anchor='e', padx=5).grid(row=row_t, column=1,
+                                                                                                    sticky='nsew')
+        tk.Label(f_g, textvariable=t["self"], relief="ridge", bg="#f5f5f5", anchor='e', padx=5).grid(row=row_t,
+                                                                                                     column=2,
+                                                                                                     sticky='nsew')
+        tk.Label(f_g, textvariable=t["refund"], relief="ridge", bg="#f5f5f5", anchor='e', padx=5,
+                 font=("", 9, "bold")).grid(row=row_t, column=3, sticky='nsew')
 
-        # "总计"标签
-        tk.Label(table_frame, text="总 计", relief="ridge", bg="#f5f5f5", font=("微软雅黑", 9, "bold")).grid(
-            row=self.row_idx_total, column=0, sticky="nsew")
-        # 票面金额合计显示
-        self.lbl_total_amt = tk.Label(table_frame, text="0.00", relief="ridge", bg="#f5f5f5", anchor="e", padx=10)
-        self.lbl_total_amt.grid(row=self.row_idx_total, column=1, sticky="nsew")
-        # 自付金额合计显示
-        self.lbl_total_self = tk.Label(table_frame, text="0.00", relief="ridge", bg="#f5f5f5", anchor="e", padx=10)
-        self.lbl_total_self.grid(row=self.row_idx_total, column=2, sticky="nsew")
-        # 实报金额合计显示（加粗）
-        self.lbl_total_refund = tk.Label(table_frame, text="0.00", relief="ridge", bg="#f5f5f5", anchor="e", padx=10,
-                                         font=("微软雅黑", 9, "bold"))
-        self.lbl_total_refund.grid(row=self.row_idx_total, column=3, sticky="nsew")
+    def bind_traces(self):
+        for d, t in [(self.data_out, self.out_totals), (self.data_in, self.in_totals)]:
+            for cat in d:
+                d[cat]["amt"].trace_add("write", lambda *a, x=d, y=t: self.update_calc(x, y))
+                d[cat]["self"].trace_add("write", lambda *a, x=d, y=t: self.update_calc(x, y))
 
-        # --- 导出按钮 ---
-        tk.Button(root, text=" 2. 保存并导出 PDF + CSV ", command=self.output_files, bg="#4CAF50", fg="white",
-                  font=("微软雅黑", 12, "bold"), height=2, width=30).pack(pady=30)
+    def update_calc(self, d, t):
+        s_a, s_s, s_r = 0.0, 0.0, 0.0
+        for c in d:
+            try:
+                a, s = float(d[c]["amt"].get() or 0), float(d[c]["self"].get() or 0)
+                d[c]["refund"].set(f"{a - s:.2f}");
+                s_a += a;
+                s_s += s;
+                s_r += (a - s)
+            except:
+                pass
+        t["amt"].set(f"{s_a:.2f}");
+        t["self"].set(f"{s_s:.2f}");
+        t["refund"].set(f"{s_r:.2f}")
+        self.update_summary()
 
-    def load_excel(self):
-        """
-        加载Excel文件并自动解析和分类数据
-        从Excel发票明细中提取信息，按项目分类汇总
-        """
-        # 打开文件选择对话框，限制只能选择Excel文件
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
-        if not file_path:  # 用户取消了选择
-            return
+    def update_summary(self):
+        t_p, t_s = 0.0, 0.0
+        for c in self.summary_cats:
+            v1 = float(self.data_out.get(c, {}).get("amt", tk.StringVar(value="0")).get() or 0)
+            v2 = float(self.data_in.get(c, {}).get("amt", tk.StringVar(value="0")).get() or 0)
+            s1 = float(self.data_out.get(c, {}).get("self", tk.StringVar(value="0")).get() or 0)
+            s2 = float(self.data_in.get(c, {}).get("self", tk.StringVar(value="0")).get() or 0)
+            self.sum_amt_vars[c].set(f"{v1 + v2:.2f}");
+            t_p += (v1 + v2);
+            t_s += (s1 + s2)
+        self.lbl_final.config(text=f"票面总金额: {t_p:.2f}   自费自负: {t_s:.2f}   实报数合计: {t_p - t_s:.2f}")
 
+    def load_excel(self, d, m):
+        path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
+        if not path: return
         try:
-            # 使用pandas读取Excel文件
-            df = pd.read_excel(file_path)
-
-            # 提取姓名：尝试从不同列名中查找姓名信息
-            for col in ['购方名称', '交款人', '姓名']:
-                if col in df.columns:
-                    name = str(df[col].dropna().iloc[0]).strip()  # 获取第一个非空值
-                    if name:  # 如果找到姓名
-                        self.info_entries["name"].delete(0, tk.END)  # 清空姓名输入框
-                        self.info_entries["name"].insert(0, name)  # 填入找到的姓名
-                        break  # 找到姓名后跳出循环
-
-            # 处理发票数据：按发票代码和发票号码分组（每张发票一个组）
-            df['code_filler'] = df['发票代码'].fillna('N/A').astype(str)  # 填充空值，转换为字符串
-            df['num_filler'] = df['发票号码'].fillna('N/A').astype(str)  # 填充空值，转换为字符串
-            inv_groups = df.groupby(['code_filler', 'num_filler'])  # 按发票分组
-
-            # 初始化各类别总金额字典
-            grand_sums = {cat: 0.0 for cat in self.display_cats}
-
-            # 遍历每张发票
-            for _, group in inv_groups:
-                # 获取该发票的总金额（票面金额）
-                inv_total = float(group['票面金额'].iloc[0])
-                # 初始化该发票的分类金额字典
-                inv_cat_sums = {cat: 0.0 for cat in self.project_mapping}
-
-                # 遍历发票中的每个明细项目
-                for _, row in group.iterrows():
-                    item_name = str(row['货物或应税劳务名称'])  # 项目名称
-                    # 获取项目金额，如果'金额'列不存在则使用0
-                    item_amt = float(row['金额'] if '金额' in row else 0)
-
-                    if item_amt > 0:  # 只处理金额大于0的项目
-                        # 根据项目名称关键词分类
-                        for cat, keywords in self.project_mapping.items():
-                            if any(k in item_name for k in keywords):  # 如果名称包含关键词
-                                inv_cat_sums[cat] += item_amt  # 累加到对应分类
-                                break  # 找到分类后跳出循环
-
-                # 计算该发票中已识别的金额总和
-                known_sum = sum(inv_cat_sums.values())
-
-                # 累加到总金额字典
-                for cat in self.project_mapping:
-                    grand_sums[cat] += inv_cat_sums[cat]
-                # 未识别的金额归入"其他项目"
-                grand_sums["其他项目"] += (inv_total - known_sum)
-
-            # 更新界面中的票面金额显示
-            for cat in self.display_cats:
-                self.amt_vars[cat].set(f"{max(0, grand_sums[cat]):.2f}")  # 确保非负数
-
-            # 更新文件加载状态标签
-            self.lbl_file.config(text=f"已加载: {os.path.basename(file_path)}", fg="green")
-
-            # 更新所有合计金额
-            self.update_all_totals()
-
+            df = pd.read_excel(path)
+            if not self.info_vars["name"].get():
+                for c in ['购方名称', '交款人', '姓名']:
+                    if c in df.columns: self.info_vars["name"].set(str(df[c].dropna().iloc[0]).strip()); break
+            df['code'] = df['发票代码'].fillna('N/A').astype(str);
+            df['num'] = df['发票号码'].fillna('N/A').astype(str)
+            tmp = {c: 0.0 for c in d.keys()}
+            for _, g in df.groupby(['code', 'num']):
+                total = float(g['票面金额'].iloc[0]);
+                known = 0.0
+                for _, r in g.iterrows():
+                    name, amt = str(r['货物或应税劳务名称']), float(r['金额'] if '金额' in r else 0)
+                    if amt > 0:
+                        for cat, keys in m.items():
+                            if any(k in name for k in keys): tmp[cat] += amt; known += amt; break
+                tmp["其他费"] += (total - known)
+            for c in d: d[c]["amt"].set(f"{max(0, tmp[c]):.2f}")
         except Exception as e:
-            # 异常处理：显示错误信息对话框
             messagebox.showerror("错误", str(e))
 
-    def update_all_totals(self, event=None):
-        """
-        更新所有合计金额（票面金额合计、自付金额合计、实报金额合计）
-        实时计算并更新表格底部的总计行
-        :param event: 事件对象（可选，用于事件绑定）
-        """
-        s_amt, s_self, s_ref = 0.0, 0.0, 0.0  # 初始化总和变量
+    def generate_output(self):
+        name = self.info_vars["name"].get() or "未命名"
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        pdf_path = os.path.join(APP_PATH, f"报销单_{name}_{ts}.pdf")
+        csv_path = os.path.join(APP_PATH, f"报销单_{name}_{ts}.csv")
 
-        # 遍历所有分类
-        for cat in self.display_cats:
-            try:
-                # 获取票面金额和自付金额
-                a = float(self.amt_vars[cat].get() or 0)
-                s = float(self.self_vars[cat].get() or 0)
+        p_t = sum(float(self.sum_amt_vars[c].get()) for c in self.summary_cats)
+        s_t = float(self.out_totals["self"].get()) + float(self.in_totals["self"].get())
+        f_a = p_t - s_t
 
-                # 计算实报金额 = 票面金额 - 自付金额
-                self.refund_labels[cat].config(text=f"{a - s:.2f}")
-
-                # 累加到总和
-                s_amt += a
-                s_self += s
-                s_ref += (a - s)
-            except:
-                pass  # 忽略转换错误（如果输入的不是有效数字）
-
-        # 更新合计行显示
-        self.lbl_total_amt.config(text=f"{s_amt:.2f}")
-        self.lbl_total_self.config(text=f"{s_self:.2f}")
-        self.lbl_total_refund.config(text=f"{s_ref:.2f}")
-
-    def output_files(self):
-        """
-        保存CSV文件并生成PDF文件
-        将当前数据导出为CSV和PDF格式
-        """
-        # 获取姓名（用于文件名），如果为空则使用"未命名"
-        name = self.info_entries["name"].get() or "未命名"
-        # 生成时间戳（用于文件名去重），格式：年月日_时分
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
-        # --- 核心修改：获取当前程序（EXE或脚本）所在的绝对路径 ---
-        import sys
-        if getattr(sys, 'frozen', False):
-            # 如果是打包后的 EXE 运行
-            application_path = os.path.dirname(sys.executable)
-        else:
-            # 如果是脚本运行
-            application_path = os.path.dirname(os.path.abspath(__file__))
-
-        # --- 拼接完整的文件路径 ---
-        csv_name = os.path.join(application_path, f"报销单_{name}_{timestamp}.csv")
-        pdf_name = os.path.join(application_path, f"报销单_{name}_{timestamp}.pdf")
-
-        # 1. 保存 CSV 文件
         try:
-            # 准备CSV数据
-            csv_data = {
-                "项目": self.display_cats + ["总计"],  # 项目列：6个分类 + 总计行
-                "票面合计": [self.amt_vars[c].get() for c in self.display_cats] + [self.lbl_total_amt.cget("text")],
-                "自付金额": [self.self_vars[c].get() or "0.00" for c in self.display_cats] + [
-                    self.lbl_total_self.cget("text")],
-                "实报金额": [self.refund_labels[c].cget("text") for c in self.display_cats] + [
-                    self.lbl_total_refund.cget("text")]
-            }
+            # 1. 保存 CSV
+            csv_rows = []
+            csv_rows.append(["【个人信息】"])
+            for k in ["name", "id", "bank", "date", "age", "unit", "type", "phone"]:
+                csv_rows.append([k, self.info_vars[k].get()])
+            csv_rows.append(["in_days", self.in_days_var.get()])
+            csv_rows.append([])
+            csv_rows.append(["【最终结果】"])
+            csv_rows.append(["票面总计", p_t])
+            csv_rows.append(["自费总计", s_t])
+            csv_rows.append(["实报数", f_a])
+            pd.DataFrame(csv_rows).to_csv(csv_path, index=False, header=False, encoding="utf-8-sig")
 
-            # 创建DataFrame并保存为CSV
-            df_out = pd.DataFrame(csv_data)
-            # 使用拼接后的绝对路径保存CSV，使用UTF-8-BOM编码（支持Excel中文显示）
-            df_out.to_csv(csv_name, index=False, encoding="utf-8-sig")
+            # 2. 生成 PDF
+            pdf = FPDF();
+            pdf.add_page()
+            pdf.add_font("SimSun", "", r"C:\Windows\Fonts\simsun.ttc")
+
+            pdf.set_font("SimSun", size=18);
+            pdf.cell(190, 12, "医 药 费 报 销 单", ln=True, align="C")
+            pdf.set_font("SimSun", size=11)
+            pdf.cell(190, 8, f"日期：{self.info_vars['date'].get()}", ln=True, align="R")
+
+            h = 8
+            pdf.cell(45, h, f"姓名：{self.info_vars['name'].get()}", border=1)
+            pdf.cell(70, h, f"身份证号：{self.info_vars['id'].get()}", border=1)
+            pdf.cell(75, h, f"银行卡号：{self.info_vars['bank'].get()}", border=1, ln=True)
+            pdf.cell(45, h, f"年龄：{self.info_vars['age'].get()}", border=1)
+            pdf.cell(70, h, f"单位：{self.info_vars['unit'].get()}", border=1)
+            pdf.cell(35, h, f"人员类型：{self.info_vars['type'].get()}", border=1)
+            pdf.cell(40, h, f"手机号：{self.info_vars['phone'].get()}", border=1, ln=True)
+
+            pdf.ln(2);
+            w1, w2 = 33, 30
+            pdf.set_font("SimSun", size=10)
+            for _ in range(3):
+                pdf.cell(w1, h, "项目", border=1, align="C")
+                pdf.cell(w2, h, "金额", border=1, align="C")
+            pdf.ln()
+
+            pdf.set_font("SimSun", size=11)
+            grid = [("医事服务费", "西药", "床位费"), ("检查费", "中药", "其他费"), ("治疗费", "卫生材料费", "")]
+            for row in grid:
+                for cat in row:
+                    pdf.cell(w1, h, cat, border=1)
+                    val = self.sum_amt_vars[cat].get() if cat else ""
+                    pdf.cell(w2, h, val, border=1, align="R")
+                pdf.ln()
+
+            # 结算行
+            line1 = f"票面总金额：{p_t:.2f}    -自费自负：{s_t:.2f}"
+            pdf.cell(189, h, line1, border=1, ln=True)
+            line2 = f" =总合计：            -个人负担：            =实报数：{f_a:.2f}"
+            pdf.cell(189, h, line2, border=1, ln=True)
+            pdf.cell(189, h, f"实报数(大写)：{cn_currency(f_a)}", border=1, ln=True)
+
+            # --- 岗位修正：复核、制表、初审 ---
+            pdf.ln(2)
+            pdf.cell(63, h, "复核：", ln=0)
+            pdf.cell(63, h, "制表：", ln=0)
+            pdf.cell(64, h, "初审：", ln=1)
+
+            # 承诺语右对齐
+            pdf.ln(6)
+            pdf.set_font("SimSun", size=11)
+            pdf.cell(190, 7, "本人承诺所提交票据（含电子票据）真实有效，无重复报销。", ln=True, align='R')
+            pdf.cell(190, 7, "承诺并确认签字：____________________", ln=True, align='R')
+
+            pdf.output(pdf_path);
+            os.startfile(pdf_path)
+            messagebox.showinfo("成功", f"文件已保存至程序所在目录。")
         except Exception as e:
-            messagebox.showerror("CSV保存失败", str(e))
-            return  # CSV保存失败时不再继续生成PDF
-
-        # 2. 生成 PDF 文件
-        try:
-            pdf = FPDF()  # 创建PDF对象
-            pdf.add_page()  # 添加一个新页面
-
-            # 设置中文字体（使用Windows系统自带的宋体）
-            font_path = r"C:\Windows\Fonts\simsun.ttc"  # 宋体字体文件路径
-            pdf.add_font("SimSun", style="", fname=font_path)  # 添加字体
-            pdf.set_font("SimSun", size=14)  # 设置字体和大小
-
-            # 标题
-            pdf.cell(190, 8, "医药费报销明细表", ln=True, align="C")
-            pdf.ln(2)  # 换行，留出间距
-
-            # 个人信息第一行：姓名左对齐，日期右对齐
-            pdf.set_font("SimSun", size=9)
-            pdf.cell(95, 6, f"姓名: {self.info_entries['name'].get()}", ln=0, align="L")  # 左对齐，不换行
-            pdf.cell(95, 6, f"报销日期: {self.info_entries['date'].get()}", ln=1, align="R")  # 右对齐，换行
-
-            # 个人信息第二行：单位、身份证、手机、银行卡 紧凑排列
-            info_line2 = (f"单位: {self.info_entries['unit'].get()} | "
-                          f"身份证: {self.info_entries['id'].get()} | "
-                          f"手机: {self.info_entries['phone'].get()} | "
-                          f"银行卡: {self.info_entries['bank'].get()}")
-            pdf.cell(190, 6, info_line2, ln=1, align="L")
-            pdf.ln(2)  # 换行
-
-            # 表格参数设置（高度由10缩减为7，控制总高）
-            widths = [60, 40, 40, 50]  # 各列宽度
-            header = ["诊疗项目", "票面合计", "自付金额", "实报金额"]  # 表头
-
-            # 表头 - 无底色
-            for i, head in enumerate(header):
-                pdf.cell(widths[i], 7, head, border=1, align="C")  # 居中对齐
-            pdf.ln()  # 换行
-
-            # 表格内容行
-            for cat in self.display_cats:
-                pdf.cell(widths[0], 7, cat, border=1)  # 诊疗项目
-                pdf.cell(widths[1], 7, self.amt_vars[cat].get(), border=1, align="R")  # 票面合计，右对齐
-                pdf.cell(widths[2], 7, self.self_vars[cat].get() or "0.00", border=1, align="R")  # 自付金额，右对齐
-                pdf.cell(widths[3], 7, self.refund_labels[cat].cget("text"), border=1, align="R")  # 实报金额，右对齐
-                pdf.ln()  # 换行
-
-            # 合计行 - 无底色
-            pdf.set_font("SimSun", style="", size=9)
-            pdf.cell(widths[0], 7, "总 计", border=1, align="C")  # 居中对齐
-            pdf.cell(widths[1], 7, self.lbl_total_amt.cget("text"), border=1, align="R")
-            pdf.cell(widths[2], 7, self.lbl_total_self.cget("text"), border=1, align="R")
-            pdf.cell(widths[3], 7, self.lbl_total_refund.cget("text"), border=1, align="R")
-
-            # 使用拼接后的绝对路径保存PDF文件
-            pdf.output(pdf_name)
-
-            # 尝试自动打开生成的PDF文件
-            try:
-                os.startfile(pdf_name)  # 使用系统默认程序打开PDF
-            except:
-                # 如果os.startfile不可用（如在某些Linux系统），显示文件保存位置
-                messagebox.showinfo("PDF已保存", f"PDF文件已保存到：\n{os.path.abspath(pdf_name)}")
-
-            # 显示成功消息
-            messagebox.showinfo("成功", f"文件已保存：\nCSV: {csv_name}\nPDF: {pdf_name}")
-        except Exception as e:
-            # PDF生成失败处理
-            messagebox.showerror("PDF生成失败", f"错误：{str(e)}")
+            messagebox.showerror("导出错误", str(e))
 
 
-# 程序入口点
 if __name__ == "__main__":
-    root = tk.Tk()  # 创建tkinter主窗口
-    app = MedicalReportApp(root)  # 创建应用程序实例
-    root.mainloop()  # 启动GUI事件循环
+    root = tk.Tk();
+    app = MedicalApp(root);
+    root.mainloop()
