@@ -230,6 +230,19 @@ class MedicalReportApp:
         # 生成时间戳（用于文件名去重），格式：年月日_时分
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
+        # --- 核心修改：获取当前程序（EXE或脚本）所在的绝对路径 ---
+        import sys
+        if getattr(sys, 'frozen', False):
+            # 如果是打包后的 EXE 运行
+            application_path = os.path.dirname(sys.executable)
+        else:
+            # 如果是脚本运行
+            application_path = os.path.dirname(os.path.abspath(__file__))
+
+        # --- 拼接完整的文件路径 ---
+        csv_name = os.path.join(application_path, f"报销单_{name}_{timestamp}.csv")
+        pdf_name = os.path.join(application_path, f"报销单_{name}_{timestamp}.pdf")
+
         # 1. 保存 CSV 文件
         try:
             # 准备CSV数据
@@ -244,8 +257,7 @@ class MedicalReportApp:
 
             # 创建DataFrame并保存为CSV
             df_out = pd.DataFrame(csv_data)
-            csv_name = f"报销单_{name}_{timestamp}.csv"  # 生成CSV文件名
-            # 保存CSV，使用UTF-8-BOM编码（支持Excel中文显示）
+            # 使用拼接后的绝对路径保存CSV，使用UTF-8-BOM编码（支持Excel中文显示）
             df_out.to_csv(csv_name, index=False, encoding="utf-8-sig")
         except Exception as e:
             messagebox.showerror("CSV保存失败", str(e))
@@ -302,8 +314,7 @@ class MedicalReportApp:
             pdf.cell(widths[2], 7, self.lbl_total_self.cget("text"), border=1, align="R")
             pdf.cell(widths[3], 7, self.lbl_total_refund.cget("text"), border=1, align="R")
 
-            # 保存PDF文件
-            pdf_name = f"报销单_{name}_{timestamp}.pdf"
+            # 使用拼接后的绝对路径保存PDF文件
             pdf.output(pdf_name)
 
             # 尝试自动打开生成的PDF文件
