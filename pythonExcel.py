@@ -48,10 +48,9 @@ def cn_currency(value):
 class MedicalApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("医疗费报销系统 V2.0 (三级审核版)")
+        self.root.title("医疗费报销系统 V2.0 (精简边框版)")
         self.root.geometry("850x400")
 
-        # 映射
         self.outpatient_mapping = {"医事服务费": ["医事服务费", "诊察费"], "检查费": ["检查费", "化验费"],
                                    "治疗费": ["治疗费"], "西药": ["西药费"], "中药": ["中药饮片", "中草药", "中成药"],
                                    "卫生材料费": ["材料费", "卫生材料费"]}
@@ -59,7 +58,6 @@ class MedicalApp:
         self.inpatient_mapping["床位费"] = ["床位费", "空调费", "住院费", "住院"]
         self.summary_cats = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "床位费", "其他费"]
 
-        # 变量
         self.info_vars = {k: tk.StringVar() for k in ["name", "id", "bank", "age", "unit", "type", "phone", "date"]}
         self.info_vars["date"].set(datetime.now().strftime("%Y-%m-%d"))
         self.in_days_var = tk.StringVar(value="0")
@@ -86,7 +84,6 @@ class MedicalApp:
         self.notebook.add(tab, text=" 1. 报销单汇总 ")
         f_info = tk.LabelFrame(tab, text="基本信息", padx=5, pady=5)
         f_info.pack(fill='x', padx=5)
-
         tk.Label(f_info, text="姓名:").grid(row=0, column=0, sticky='e')
         tk.Entry(f_info, textvariable=self.info_vars["name"], width=10).grid(row=0, column=1, padx=2)
         tk.Label(f_info, text="身份证:").grid(row=0, column=2, sticky='e')
@@ -130,7 +127,6 @@ class MedicalApp:
         if days:
             tk.Label(top, text="住院天数:").pack(side='left')
             tk.Entry(top, textvariable=self.in_days_var, width=5).pack(side='left')
-
         f_g = tk.Frame(tab, padx=5);
         f_g.pack(fill='both')
         for c, text in enumerate(["诊疗项目", "票面金额", "自付金额", "实报金额"]):
@@ -231,8 +227,8 @@ class MedicalApp:
             csv_rows.append(["in_days", self.in_days_var.get()])
             csv_rows.append([])
             csv_rows.append(["【最终结果】"])
-            csv_rows.append(["票面总计", p_t])
-            csv_rows.append(["自费总计", s_t])
+            csv_rows.append(["票面总计", p_t]);
+            csv_rows.append(["自费总计", s_t]);
             csv_rows.append(["实报数", f_a])
             pd.DataFrame(csv_rows).to_csv(csv_path, index=False, header=False, encoding="utf-8-sig")
 
@@ -240,12 +236,10 @@ class MedicalApp:
             pdf = FPDF();
             pdf.add_page()
             pdf.add_font("SimSun", "", r"C:\Windows\Fonts\simsun.ttc")
-
             pdf.set_font("SimSun", size=18);
             pdf.cell(190, 12, "医 药 费 报 销 单", ln=True, align="C")
             pdf.set_font("SimSun", size=11)
             pdf.cell(190, 8, f"日期：{self.info_vars['date'].get()}", ln=True, align="R")
-
             h = 8
             pdf.cell(45, h, f"姓名：{self.info_vars['name'].get()}", border=1)
             pdf.cell(70, h, f"身份证号：{self.info_vars['id'].get()}", border=1)
@@ -254,7 +248,6 @@ class MedicalApp:
             pdf.cell(70, h, f"单位：{self.info_vars['unit'].get()}", border=1)
             pdf.cell(35, h, f"人员类型：{self.info_vars['type'].get()}", border=1)
             pdf.cell(40, h, f"手机号：{self.info_vars['phone'].get()}", border=1, ln=True)
-
             pdf.ln(2);
             w1, w2 = 33, 30
             pdf.set_font("SimSun", size=10)
@@ -262,7 +255,6 @@ class MedicalApp:
                 pdf.cell(w1, h, "项目", border=1, align="C")
                 pdf.cell(w2, h, "金额", border=1, align="C")
             pdf.ln()
-
             pdf.set_font("SimSun", size=11)
             grid = [("医事服务费", "西药", "床位费"), ("检查费", "中药", "其他费"), ("治疗费", "卫生材料费", "")]
             for row in grid:
@@ -272,30 +264,36 @@ class MedicalApp:
                     pdf.cell(w2, h, val, border=1, align="R")
                 pdf.ln()
 
-            # 结算行
-            line1 = f"票面总金额：{p_t:.2f}    -自费自负：{s_t:.2f}"
-            pdf.cell(189, h, line1, border=1, ln=True)
-            line2 = f" =总合计：            -个人负担：            =实报数：{f_a:.2f}"
-            pdf.cell(189, h, line2, border=1, ln=True)
-            pdf.cell(189, h, f"实报数(大写)：{cn_currency(f_a)}", border=1, ln=True)
+            # --- 修改重点：将结算公式放入一个大格，去掉中间横线 ---
+            # 获取当前 X, Y 坐标
+            start_x = pdf.get_x()
+            start_y = pdf.get_y()
+            total_w = 189
+            total_h = h * 3  # 三行的高度
 
-            # --- 岗位修正：复核、制表、初审 ---
-            pdf.ln(2)
-            pdf.cell(63, h, "复核：", ln=0)
-            pdf.cell(63, h, "制表：", ln=0)
+            # 画一个总的外边框
+            pdf.rect(start_x, start_y, total_w, total_h)
+
+            # 内部内容通过无边框(border=0)或仅左右边框绘制
+            pdf.cell(total_w, h, f"票面总金额：{p_t:.2f}    -自费自负：{s_t:.2f}", ln=True, border=0)
+            pdf.cell(total_w, h, f" =总合计：            -个人负担：            =实报数：{f_a:.2f}", ln=True, border=0)
+            pdf.cell(total_w, h, f"实报数(大写)：{cn_currency(f_a)}", ln=True, border=1)
+
+            # 签字位
+            pdf.ln(2);
+            pdf.set_font("SimSun", size=13)
+            pdf.cell(63, h, "复核：", ln=0);
+            pdf.cell(63, h, "制表：", ln=0);
             pdf.cell(64, h, "初审：", ln=1)
-
-            # 承诺语右对齐
-            pdf.ln(6)
-            pdf.set_font("SimSun", size=11)
+            pdf.ln(6);
             pdf.cell(190, 7, "本人承诺所提交票据（含电子票据）真实有效，无重复报销。", ln=True, align='R')
             pdf.cell(190, 7, "承诺并确认签字：____________________", ln=True, align='R')
 
             pdf.output(pdf_path);
             os.startfile(pdf_path)
-            messagebox.showinfo("成功", f"文件已保存至程序所在目录。")
+            messagebox.showinfo("成功", "文件已保存。")
         except Exception as e:
-            messagebox.showerror("导出错误", str(e))
+            messagebox.showerror("错误", str(e))
 
 
 if __name__ == "__main__":
