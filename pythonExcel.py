@@ -18,30 +18,32 @@ else:
 class MedicalAppV3:
     def __init__(self, root):
         self.root = root
-        self.root.title("医疗费报销系统 V3.4")
+        self.root.title("医疗费报销系统 V3.5 (智能互斥分类版)")
         self.root.geometry("850x700")
 
-        # 1. 扫码数据结构定义
+        # 1. 项目顺序定义 (扫码32项协议)
         self.out_order = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "其他费"]
         self.in_order = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "床位费", "其他费"]
 
+        # 2. 关键词映射 (基础分类)
         self.mapping = {
-            "医事服务费": ["医事服务费", "诊察费"], "检查费": ["检查费", "化验费"],
-            "治疗费": ["治疗费"], "西药": ["西药费"], "中药": ["中药饮片", "中草药", "中成药"],
-            "卫生材料费": ["材料费", "卫生材料费"], "床位费": ["床位费", "空调费", "住院费", "住院"]
+            "检查费": ["检查费", "化验费"],
+            "治疗费": ["治疗费"],
+            "西药": ["西药费"],
+            "中药": ["中药饮片", "中草药", "中成药"],
+            "卫生材料费": ["材料费", "卫生材料费"],
+            "床位费": ["床位费", "空调费", "住院费", "住院"]
         }
 
-        # 2. 变量定义
+        # 变量定义
         self.data_out = self.init_struct(self.out_order)
         self.data_in = self.init_struct(self.in_order)
         self.in_days_var = tk.StringVar(value="0")
         self.base_dir = tk.StringVar(value=APP_PATH)
         self.serial_folder = tk.StringVar(value="")
-
         self.out_calc_entries = []
         self.in_calc_entries = []
 
-        # 3. UI布局
         self.setup_ui()
         self.bind_traces()
 
@@ -138,7 +140,6 @@ class MedicalAppV3:
             ent = tk.Entry(frame, textvariable=data_dict[cat]["calc"], bg="#fffde7");
             ent.grid(row=r, column=4, sticky='nsew')
             entries_list.append(ent)
-
             ent.bind("<FocusOut>", lambda e, c=cat, d=data_dict: self.perform_single_calc(c, d))
             ent.bind("<Return>",
                      lambda e, c=cat, d=data_dict, l=entries_list, idx=i: self.handle_enter(e, c, d, l, idx))
@@ -176,57 +177,73 @@ class MedicalAppV3:
             res_out = {c: 0.0 for c in self.out_order};
             res_in = {c: 0.0 for c in self.in_order}
             df['f_key'] = df['发票代码'].fillna('A').astype(str) + df['发票号码'].fillna('B').astype(str)
+
             for _, group in df.groupby('f_key'):
                 m_type = str(group['医疗类型'].iloc[0]).strip()
                 is_in = (m_type == "住院")
-                t_res, t_order = (res_in, self.in_order) if is_in else (res_out, self.out_order)
+                t_res = res_in if is_in else res_out
+
+                # --- 核心逻辑调整：预检“诊察费” ---
+                all_names = group['货物或应税劳务名称'].astype(str).tolist()
+                has_zhencha = any("诊察费" == n.strip() for n in all_names)  # 严格判断诊察费
+
                 inv_total = float(group['票面金额'].iloc[0])
                 known = 0.0
+
                 for _, row in group.iterrows():
-                    name, amt = str(row['货物或应税劳务名称']), float(row['金额'] or 0)
-                    for cat in t_order:
-                        if cat != "其他费" and any(k in name for k in self.mapping.get(cat, [])):
-                            t_res[cat] += amt;
-                            known += amt;
-                            break
+                    name = str(row['货物或应税劳务名称']).strip()
+                    amt = float(row['金额'] or 0)
+                    if amt <= 0: continue
+
+                    matched = False
+                    # 1. 处理“医事服务费”分类的特殊规则
+                    if has_zhencha:
+                        # 规则A：有诊察费，只加诊察费，忽略医事服务费
+                        if name == "诊察费":
+                            t_res["医事服务费"] += amt
+                            known += amt
+                            matched = True
+                    else:
+                        # 规则B：没诊察费，加医事服务费和急诊诊察费
+                        if name in ["医事服务费", "急诊诊察费"]:
+                            t_res["医事服务费"] += amt
+                            known += amt
+                            matched = True
+
+                    # 2. 处理其他常规映射分类
+                    if not matched:
+                        for cat, keywords in self.mapping.items():
+                            if any(k in name for k in keywords):
+                                t_res[cat] += amt
+                                known += amt
+                                matched = True
+                                break
+
+                # 3. 差额进入其他费
                 t_res["其他费"] += (inv_total - known)
+
             for c in self.out_order: self.data_out[c]["amt"].set(f"{max(0, res_out[c]):.2f}")
             for c in self.in_order: self.data_in[c]["amt"].set(f"{max(0, res_in[c]):.2f}")
+            messagebox.showinfo("成功", "数据已按新规则加载")
         except Exception as e:
             messagebox.showerror("错误", str(e))
 
     def generate_qr(self):
-        # 强制同步所有输入框数据
         self.root.focus_set()
-
-        # 准备数据字符串
         data = [self.serial_folder.get() or "无流水号"]
         for cat in self.out_order: data.extend([self.data_out[cat]["amt"].get(), self.data_out[cat]["self"].get()])
         data.append(self.in_days_var.get())
         for cat in self.in_order: data.extend([self.data_in[cat]["amt"].get(), self.data_in[cat]["self"].get()])
         qr_str = "\t".join(data)
-
-        # 创建二维码窗口
-        qr_win = tk.Toplevel(self.root)
+        qr_win = tk.Toplevel(self.root);
         qr_win.title("扫码录入")
-
-        # 生成二维码图片
-        qr_gen = qrcode.QRCode(box_size=10, border=2)
-        qr_gen.add_data(qr_str)
+        qr_gen = qrcode.QRCode(box_size=10, border=2);
+        qr_gen.add_data(qr_str);
         qr_gen.make(fit=True)
         img = qr_gen.make_image(fill_color="black", back_color="white")
-
-        # 将 PIL Image 转换为 Tkinter 可用的 PhotoImage
-        # 关键修正：必须显式保留这个对象的引用，防止被垃圾回收
         self.tk_img = ImageTk.PhotoImage(img)
-
-        # 使用 Label 显示
-        lbl = tk.Label(qr_win, image=self.tk_img, padx=20, pady=20)
+        lbl = tk.Label(qr_win, image=self.tk_img, padx=20, pady=20);
         lbl.pack()
-
-        # 提示文字
-        tk.Label(qr_win, text=f"流水号：{data[0]}", font=("微软雅黑", 10, "bold"), fg="blue").pack(pady=5)
-        tk.Label(qr_win, text="使用扫码枪扫描上方二维码进行录入", fg="gray").pack(pady=5)
 
 
 if __name__ == "__main__":
