@@ -18,32 +18,35 @@ else:
 class MedicalAppV3:
     def __init__(self, root):
         self.root = root
-        self.root.title("医疗费报销系统 V3.5 (智能互斥分类版)")
+        self.root.title("医疗费报销系统 V3.6 (带明细汇总版)")
         self.root.geometry("850x700")
 
-        # 1. 项目顺序定义 (扫码32项协议)
+        # 1. 扫码数据结构定义 (32项协议，不含汇总行)
         self.out_order = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "其他费"]
         self.in_order = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "床位费", "其他费"]
 
-        # 2. 关键词映射 (基础分类)
         self.mapping = {
-            "检查费": ["检查费", "化验费"],
-            "治疗费": ["治疗费"],
-            "西药": ["西药费"],
-            "中药": ["中药饮片", "中草药", "中成药"],
-            "卫生材料费": ["材料费", "卫生材料费"],
+            "检查费": ["检查费", "化验费"], "治疗费": ["治疗费"], "西药": ["西药费"],
+            "中药": ["中药饮片", "中草药", "中成药"], "卫生材料费": ["材料费", "卫生材料费"],
             "床位费": ["床位费", "空调费", "住院费", "住院"]
         }
 
-        # 变量定义
+        # 2. 变量定义
         self.data_out = self.init_struct(self.out_order)
         self.data_in = self.init_struct(self.in_order)
+
+        # 新增：用于存储两个表格底部的合计变量
+        self.out_totals = {k: tk.StringVar(value="0.00") for k in ["amt", "self", "refund"]}
+        self.in_totals = {k: tk.StringVar(value="0.00") for k in ["amt", "self", "refund"]}
+
         self.in_days_var = tk.StringVar(value="0")
         self.base_dir = tk.StringVar(value=APP_PATH)
         self.serial_folder = tk.StringVar(value="")
+
         self.out_calc_entries = []
         self.in_calc_entries = []
 
+        # 3. UI布局
         self.setup_ui()
         self.bind_traces()
 
@@ -82,16 +85,20 @@ class MedicalAppV3:
         scrollbar.pack(side="right", fill="y")
 
         self.col_widths = [18, 15, 15, 15, 35]
-        self.create_section(self.scroll_frame, "【 门 诊 收 据 明 细 】", self.data_out, self.out_order,
-                            self.out_calc_entries)
 
+        # 门诊部分
+        self.create_section(self.scroll_frame, "【 门 诊 收 据 明 细 】", self.data_out, self.out_order,
+                            self.out_calc_entries, self.out_totals)
+
+        # 住院天数
         day_f = tk.Frame(self.scroll_frame, pady=10);
         day_f.pack(fill='x', padx=20)
         tk.Label(day_f, text="住院天数：", font=("微软雅黑", 10, "bold")).pack(side='left')
         tk.Entry(day_f, textvariable=self.in_days_var, width=10, bg="#fffde7", justify='center').pack(side='left')
 
+        # 住院部分
         self.create_section(self.scroll_frame, "【 住 院 收 据 明 细 】", self.data_in, self.in_order,
-                            self.in_calc_entries)
+                            self.in_calc_entries, self.in_totals)
 
     def browse_base_dir(self):
         path = filedialog.askdirectory()
@@ -119,13 +126,17 @@ class MedicalAppV3:
                 d[cat]["self"].set("0.00");
                 d[cat]["calc"].set("")
 
-    def create_section(self, parent, title, data_dict, order, entries_list):
+    def create_section(self, parent, title, data_dict, order, entries_list, totals_var):
         frame = tk.LabelFrame(parent, text=title, padx=10, pady=10, font=("微软雅黑", 10, "bold"))
         frame.pack(fill='x', padx=15, pady=5)
+
+        # 表头
         headers = ["诊疗项目", "票面金额", "自付金额", "实报金额", "辅助计算"]
         for c, text in enumerate(headers):
             tk.Label(frame, text=text, width=self.col_widths[c], relief="ridge", bg="#e0e0e0").grid(row=0, column=c,
                                                                                                     sticky='nsew')
+
+        # 数据行
         for i, cat in enumerate(order):
             r = i + 1
             tk.Label(frame, text=cat, width=self.col_widths[0], relief="groove", anchor='w', padx=5).grid(row=r,
@@ -144,6 +155,17 @@ class MedicalAppV3:
             ent.bind("<Return>",
                      lambda e, c=cat, d=data_dict, l=entries_list, idx=i: self.handle_enter(e, c, d, l, idx))
 
+        # --- 新增：表格底部合计行 ---
+        row_sum = len(order) + 1
+        tk.Label(frame, text="该表合计", width=self.col_widths[0], relief="ridge", bg="#f5f5f5",
+                 font=("微软雅黑", 9, "bold")).grid(row=row_sum, column=0, sticky='nsew')
+        tk.Label(frame, textvariable=totals_var["amt"], width=self.col_widths[1], relief="ridge", bg="#f5f5f5",
+                 anchor='e', padx=5).grid(row=row_sum, column=1, sticky='nsew')
+        tk.Label(frame, textvariable=totals_var["self"], width=self.col_widths[2], relief="ridge", bg="#f5f5f5",
+                 anchor='e', padx=5).grid(row=row_sum, column=2, sticky='nsew')
+        tk.Label(frame, textvariable=totals_var["refund"], width=self.col_widths[3], relief="ridge", bg="#f5f5f5",
+                 anchor='e', padx=5, font=("微软雅黑", 9, "bold"), fg="blue").grid(row=row_sum, column=3, sticky='nsew')
+
     def handle_enter(self, event, cat, data_dict, entries_list, current_idx):
         self.perform_single_calc(cat, data_dict)
         next_idx = (current_idx + 1) % len(entries_list)
@@ -156,18 +178,32 @@ class MedicalAppV3:
         data_dict[cat]["self"].set(f"{total_sum:.2f}")
 
     def bind_traces(self):
-        for d in [self.data_out, self.data_in]:
-            for cat in d:
-                d[cat]["amt"].trace_add("write", lambda *a, x=d: self.refresh(x))
-                d[cat]["self"].trace_add("write", lambda *a, x=d: self.refresh(x))
+        # 监听门诊数据
+        for cat in self.data_out:
+            self.data_out[cat]["amt"].trace_add("write", lambda *a: self.refresh(self.data_out, self.out_totals))
+            self.data_out[cat]["self"].trace_add("write", lambda *a: self.refresh(self.data_out, self.out_totals))
+        # 监听住院数据
+        for cat in self.data_in:
+            self.data_in[cat]["amt"].trace_add("write", lambda *a: self.refresh(self.data_in, self.in_totals))
+            self.data_in[cat]["self"].trace_add("write", lambda *a: self.refresh(self.data_in, self.in_totals))
 
-    def refresh(self, d):
+    def refresh(self, d, totals_var):
+        """刷新单行实报金额并更新该表合计值"""
+        s_a, s_s, s_r = 0.0, 0.0, 0.0
         for cat in d:
             try:
-                a, s = float(d[cat]["amt"].get() or 0), float(d[cat]["self"].get() or 0)
-                d[cat]["refund"].set(f"{a - s:.2f}")
+                a = float(d[cat]["amt"].get() or 0)
+                s = float(d[cat]["self"].get() or 0)
+                r = a - s
+                d[cat]["refund"].set(f"{r:.2f}")
+                s_a += a;
+                s_s += s;
+                s_r += r
             except:
                 pass
+        totals_var["amt"].set(f"{s_a:.2f}")
+        totals_var["self"].set(f"{s_s:.2f}")
+        totals_var["refund"].set(f"{s_r:.2f}")
 
     def load_excel(self):
         path = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx *.xls")])
@@ -183,10 +219,8 @@ class MedicalAppV3:
                 is_in = (m_type == "住院")
                 t_res = res_in if is_in else res_out
 
-                # --- 核心逻辑调整：预检“诊察费” ---
                 all_names = group['货物或应税劳务名称'].astype(str).tolist()
-                has_zhencha = any("诊察费" == n.strip() for n in all_names)  # 严格判断诊察费
-
+                has_zhencha = any("诊察费" == n.strip() for n in all_names)
                 inv_total = float(group['票面金额'].iloc[0])
                 known = 0.0
 
@@ -194,32 +228,19 @@ class MedicalAppV3:
                     name = str(row['货物或应税劳务名称']).strip()
                     amt = float(row['金额'] or 0)
                     if amt <= 0: continue
-
                     matched = False
-                    # 1. 处理“医事服务费”分类的特殊规则
                     if has_zhencha:
-                        # 规则A：有诊察费，只加诊察费，忽略医事服务费
-                        if name == "诊察费":
-                            t_res["医事服务费"] += amt
-                            known += amt
-                            matched = True
+                        if name == "诊察费": t_res["医事服务费"] += amt; known += amt; matched = True
                     else:
-                        # 规则B：没诊察费，加医事服务费和急诊诊察费
-                        if name in ["医事服务费", "急诊诊察费"]:
-                            t_res["医事服务费"] += amt
-                            known += amt
-                            matched = True
-
-                    # 2. 处理其他常规映射分类
+                        if name in ["医事服务费", "急诊诊察费"]: t_res[
+                            "医事服务费"] += amt; known += amt; matched = True
                     if not matched:
                         for cat, keywords in self.mapping.items():
                             if any(k in name for k in keywords):
-                                t_res[cat] += amt
-                                known += amt
-                                matched = True
+                                t_res[cat] += amt;
+                                known += amt;
+                                matched = True;
                                 break
-
-                # 3. 差额进入其他费
                 t_res["其他费"] += (inv_total - known)
 
             for c in self.out_order: self.data_out[c]["amt"].set(f"{max(0, res_out[c]):.2f}")
@@ -230,13 +251,18 @@ class MedicalAppV3:
 
     def generate_qr(self):
         self.root.focus_set()
+        # 严格按照 32 项协议构造数据字符串
         data = [self.serial_folder.get() or "无流水号"]
+        # 门诊 14 项 (7项目 * 2 [票面, 自付])
         for cat in self.out_order: data.extend([self.data_out[cat]["amt"].get(), self.data_out[cat]["self"].get()])
+        # 住院天数 1 项
         data.append(self.in_days_var.get())
+        # 住院 16 项 (8项目 * 2 [票面, 自付])
         for cat in self.in_order: data.extend([self.data_in[cat]["amt"].get(), self.data_in[cat]["self"].get()])
+
         qr_str = "\t".join(data)
         qr_win = tk.Toplevel(self.root);
-        qr_win.title("扫码录入")
+        qr_win.title("扫码录入 (32项)")
         qr_gen = qrcode.QRCode(box_size=10, border=2);
         qr_gen.add_data(qr_str);
         qr_gen.make(fit=True)
@@ -244,6 +270,7 @@ class MedicalAppV3:
         self.tk_img = ImageTk.PhotoImage(img)
         lbl = tk.Label(qr_win, image=self.tk_img, padx=20, pady=20);
         lbl.pack()
+        tk.Label(qr_win, text=f"流水号：{data[0]}", font=("微软雅黑", 10, "bold"), fg="blue").pack()
 
 
 if __name__ == "__main__":
