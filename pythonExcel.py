@@ -18,8 +18,8 @@ else:
 class MedicalAppV3:
     def __init__(self, root):
         self.root = root
-        self.root.title("医疗费报销系统 V3.8 (紧凑布局版)")
-        self.root.geometry("850x750")
+        self.root.title("医疗费报销系统 V3.8.1 (单行控制整合版)")
+        self.root.geometry("880x700")
 
         # 1. 核心协议与映射
         self.out_order = ["医事服务费", "检查费", "治疗费", "西药", "中药", "卫生材料费", "其他费"]
@@ -65,7 +65,7 @@ class MedicalAppV3:
             self.root.destroy()
 
     def setup_ui(self):
-        # 顶部管理区 - 根目录 (稍作收紧)
+        # 顶部管理区 - 根目录
         top_frame = tk.Frame(self.root, pady=5, bg="#f8f9fa")
         top_frame.pack(fill='x')
 
@@ -74,15 +74,15 @@ class MedicalAppV3:
         tk.Button(top_frame, text="更改目录", command=self.browse_base_dir, font=("微软雅黑", 8)).pack(side='left',
                                                                                                        padx=5)
 
-        # 核心控制区 - 蓝色背景 (高度压缩版)
-        ctrl_frame = tk.Frame(self.root, pady=5, bg="#e3f2fd")  # pady 从 12 降至 5
+        # 核心控制整合栏 - 蓝色背景 (所有功能按钮都在这一行)
+        ctrl_frame = tk.Frame(self.root, pady=5, bg="#e3f2fd")
         ctrl_frame.pack(fill='x')
 
-        tk.Label(ctrl_frame, text="下一报销单序号:", bg="#e3f2fd", font=("微软雅黑", 9)).pack(side='left', padx=(20, 5))
+        # --- 左侧：序号控制与新建 ---
+        tk.Label(ctrl_frame, text="下一报销单:", bg="#e3f2fd", font=("微软雅黑", 9)).pack(side='left', padx=(20, 2))
         tk.Entry(ctrl_frame, textvariable=self.next_serial_var, width=12, state='readonly',
                  fg="#1565c0", font=("Consolas", 10, "bold"), justify='center').pack(side='left', padx=2)
 
-        # 增减按钮组 (微型化)
         btn_f = tk.Frame(ctrl_frame, bg="#e3f2fd")
         btn_f.pack(side='left')
         btn_up = tk.Button(btn_f, text="▲", font=("Arial", 6), width=2, height=0)
@@ -95,22 +95,19 @@ class MedicalAppV3:
         btn_dn.bind("<ButtonPress-1>", lambda e: self.start_adjust(-1))
         btn_dn.bind("<ButtonRelease-1>", self.stop_adjust)
 
-        # 新建按钮 (字体减小，内边距减小)
         tk.Button(ctrl_frame, text="新建报销单", command=self.execute_create_serial,
-                  bg="#1976D2", fg="white", font=("微软雅黑", 9, "bold"), pady=1).pack(side='left', padx=15)
+                  bg="#1976D2", fg="white", font=("微软雅黑", 9, "bold"), pady=1).pack(side='left', padx=10)
 
-        # 当前执行序号
-        tk.Label(ctrl_frame, text="| 当前录入:", bg="#e3f2fd", font=("微软雅黑", 9)).pack(side='left', padx=(5, 2))
+        # --- 中间：状态显示 ---
+        tk.Label(ctrl_frame, text="| 正在录入:", bg="#e3f2fd", font=("微软雅黑", 9)).pack(side='left', padx=(5, 2))
         tk.Label(ctrl_frame, textvariable=self.active_serial_var, fg="#2e7d32", font=("Consolas", 10, "bold"),
-                 bg="#ffffff", width=12, relief="sunken", bd=1).pack(side='left', padx=5)
+                 bg="#ffffff", width=12, relief="sunken", bd=1).pack(side='left', padx=2)
 
-        # 工具栏 (上传/扫码)
-        tool_frame = tk.Frame(self.root, pady=8, bg="#f5f5f5")
-        tool_frame.pack(fill='x')
-        tk.Button(tool_frame, text=" 1. 上传数据表 (Excel) ", command=self.load_excel,
-                  bg="#2196F3", fg="white", font=("微软雅黑", 10, "bold"), width=25).pack(side='left', padx=20)
-        tk.Button(tool_frame, text=" 2. 生成二维码 (32项) ", command=self.generate_qr,
-                  bg="#FF9800", fg="white", font=("微软雅黑", 10, "bold"), width=25).pack(side='left', padx=10)
+        # --- 右侧：功能按钮 (上传与扫码) ---
+        tk.Button(ctrl_frame, text="2. 生成二维码", command=self.generate_qr,
+                  bg="#FF9800", fg="white", font=("微软雅黑", 9, "bold"), width=12).pack(side='right', padx=(5, 20))
+        tk.Button(ctrl_frame, text="1. 上传 Excel", command=self.load_excel,
+                  bg="#2196F3", fg="white", font=("微软雅黑", 9, "bold"), width=12).pack(side='right', padx=5)
 
         # 滚动区域 (保持不变)
         main_canvas = tk.Canvas(self.root)
@@ -134,7 +131,7 @@ class MedicalAppV3:
         self.create_section(self.scroll_frame, "【 住 院 收 据 明 细 】", self.data_in, self.in_order,
                             self.in_calc_entries, self.in_totals)
 
-    # --- 后台逻辑 (保持一致) ---
+    # --- 后台逻辑维持不变 ---
     def start_adjust(self, delta):
         self.adjust_seq(delta)
         self._repeat_job = self.root.after(500, lambda: self.repeat_adjust(delta))
@@ -313,7 +310,7 @@ class MedicalAppV3:
         self.root.focus_set()
         cur_serial = self.active_serial_var.get()
         if cur_serial == "未开始":
-            messagebox.showwarning("提醒", "请先新建报销单。")
+            messagebox.showwarning("提醒", "请先点击新建报销单以确定执行序号。")
             return
         data = [cur_serial]
         for cat in self.out_order: data.extend([self.data_out[cat]["amt"].get(), self.data_out[cat]["self"].get()])
